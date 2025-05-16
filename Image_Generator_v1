@@ -1,0 +1,56 @@
+import torch
+from diffusers import StableDiffusionPipeline
+from PIL import Image, ImageTk
+import tkinter as tk
+from tkinter import filedialog
+import numpy as np
+
+class ImageGenerator:
+    def __init__(self):
+        self.model_id = "CompVis/stable-diffusion-v1-4"
+        self.pipe = StableDiffusionPipeline.from_pretrained(self.model_id, torch_dtype=torch.float16)
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.pipe.to(self.device)
+        self.root = tk.Tk()
+        self.root.title("AI Image Generator")
+        self.prompt_label = tk.Label(self.root, text="Prompt:")
+        self.prompt_label.pack()
+        self.prompt_entry = tk.Entry(self.root, width=50)
+        self.prompt_entry.pack()
+        self.width_label = tk.Label(self.root, text="Width:")
+        self.width_label.pack()
+        self.width_entry = tk.Entry(self.root, width=10)
+        self.width_entry.insert(0, "512")
+        self.width_entry.pack()
+        self.height_label = tk.Label(self.root, text="Height:")
+        self.height_label.pack()
+        self.height_entry = tk.Entry(self.root, width=10)
+        self.height_entry.insert(0, "512")
+        self.height_entry.pack()
+        self.steps_label = tk.Label(self.root, text="Steps:")
+        self.steps_label.pack()
+        self.steps_entry = tk.Entry(self.root, width=10)
+        self.steps_entry.insert(0, "50")
+        self.steps_entry.pack()
+        self.generate_button = tk.Button(self.root, text="Generate", command=self.generate_image)
+        self.generate_button.pack()
+        self.image_label = tk.Label(self.root)
+        self.image_label.pack()
+
+    def generate_image(self):
+        prompt = self.prompt_entry.get()
+        width = int(self.width_entry.get())
+        height = int(self.height_entry.get())
+        num_steps = int(self.steps_entry.get())
+        image = self.pipe(prompt, width=width, height=height, num_inference_steps=num_steps).images[0]
+        image.save("generated_image.png")
+        image_tk = ImageTk.PhotoImage(image)
+        self.image_label.config(image=image_tk)
+        self.image_label.image = image_tk
+
+    def run(self):
+        self.root.mainloop()
+
+if __name__ == "__main__":
+    generator = ImageGenerator()
+    generator.run()
