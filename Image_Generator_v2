@@ -1,0 +1,211 @@
+import torch
+from diffusers import StableDiffusionPipeline
+from PIL import Image, ImageTk
+import tkinter as tk
+from tkinter import filedialog, ttk, messagebox
+import numpy as np
+import os
+from datetime import datetime
+
+class ImageGenerator:
+    def __init__(self):
+        # Initialize model with safety checker disabled for flexibility
+        self.model_id = "CompVis/stable-diffusion-v1-4"
+        try:
+            self.pipe = StableDiffusionPipeline.from_pretrained(
+                self.model_id,
+                torch_dtype=torch.float16,
+                use_auth_token=False,
+                safety_checker=None
+            )
+            self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            self.pipe.to(self.device)
+            if self.device.type == "cuda":
+                self.pipe.enable_attention_slicing()  # Optimize memory usage
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to load model: {str(e)}")
+            return
+
+        # Create main window
+        self.root = tk.Tk()
+        self.root.title("AI Image Generator")
+        self.root.geometry("800x600")
+        
+        # Create main frame
+        self.main_frame = ttk.Frame(self.root, padding="10")
+        self.main_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+
+        # Input frame
+        self.input_frame = ttk.LabelFrame(self.main_frame, text="Image Parameters", padding="5")
+        self.input_frame.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=5)
+
+        # Prompt
+        ttk.Label(self.input_frame, text="Prompt:").grid(row=0, column=0, sticky=tk.W, pady=2)
+        self.prompt_entry = ttk.Entry(self.input_frame, width=50)
+        self.prompt_entry.grid(row=0, column=1, columnspan=2, sticky=(tk.W, tk.E), pady=2)
+
+        # Negative prompt
+        ttk.Label(self.input_frame, text="Negative Prompt:").grid(row=1, column=0, sticky=tk.W, pady=2)
+        self.negative_prompt_entry = ttk.Entry(self.input_frame, width=50)
+        self.negative_prompt_entry.grid(row=1, column=1, columnspan=2, sticky=(tk.W, tk.E), pady=2)
+
+        # Dimensions
+        ttk.Label(self.input_frame, text="Width:").grid(row=2, column=0, sticky=tk.W, pady=2)
+        self.width_entry = ttk.Entry(self.input_frame, width=10)
+        self.width_entry.insert(0, "512")
+        self.width_entry.grid(row=2, column=1, sticky=tk.W, pady=2)
+
+        ttk.Label(self.input_frame, text="Height:").grid(row=2, column=2, sticky=tk.W, pady=2)
+        self.height_entry = ttk.Entry(self.input_frame, width=10)
+        self.height_entry.insert(0, "512")
+        self.height_entry.grid(row=2, column=3, sticky=tk.W, pady=2)
+
+        # Steps and Seed
+        ttk.Label(self.input_frame, text="Steps:").grid(row=3, column=0, sticky=tk.W, pady=2)
+        self.steps_entry = ttk.Entry(self.input_frame, width=10)
+        self.steps_entry.insert(0, "50")
+        self.steps_entry.grid(row=3, column=1, sticky=tk.W, pady=2)
+
+        ttk.Label(self.input_frame, text="Seed:").grid(row=3, column=2, sticky=tk.W, pady=2)
+        self.seed_entry = ttk.Entry(self.input_frame, width=10)
+        self.seed_entry.insert(0, "-1")
+        self.seed_entry.grid(row=3, column=3, sticky=tk.W, pady=2)
+
+        # Buttons frame
+        self.button_frame = ttk.Frame(self.main_frame)
+        self.button_frame.grid(row=1, column=0, pady=10)
+
+        self.generate_button = ttk.Button(
+            self.button_frame, 
+            text="Generate", 
+            command=self.generate_image
+        )
+        self.generate_button.grid(row=0, column=0, padx=5)
+
+        self.save_button = ttk.Button(
+            self.button_frame, 
+            text="Save Image", 
+            command=self.save_image,
+            state="disabled"
+        )
+        self.save_button.grid(row=0, column=1, padx=5)
+
+        # Progress bar
+        self.progress = ttk.Progressbar(
+            self.main_frame, 
+            orient="horizontal", 
+            length=300, 
+            mode="determinate"
+        )
+        self.progress.grid(row=2, column=0, pady=5)
+
+        # Image display
+        self.image_label = ttk.Label(self.main_frame)
+        self.image_label.grid(row=3, column=0, pady=5)
+
+        self.current_image = None
+        self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
+
+    def update_progress(self, step, total_steps):
+        """Update progress bar during generation"""
+        progress = (step / total_steps) * 100
+        self.progress["value"] = progress
+        self.root.update()
+
+    def generate_image(self):
+        """Generate image based on user inputs"""
+        try:
+            # Get and validate inputs
+            prompt = self.prompt_entry.get().strip()
+            if not prompt:
+                messagebox.showwarning("Warning", "Please enter a prompt")
+                return
+
+            negative_prompt = self.negative_prompt_entry.get().strip()
+            width = int(self.width_entry.get())
+            height = int(self.height_entry.get())
+            num_steps = int(self.steps_entry.get())
+            seed = int(self.seed_entry.get())
+
+            if width % 8 != 0 or height % 8 != 0:
+                messagebox.showwarning("Warning", "Width and height must be divisible by 8")
+                return
+
+            if num_steps < 1 or num_steps > 100:
+                messagebox.showwarning("Warning", "Steps must be between 1 and 100")
+                return
+
+            self.generate_button["state"] = "disabled"
+            self.progress["value"] = 0
+
+            # Set up generator for seed control
+            generator = None
+            if seed != -1:
+                generator = torch.Generator(self.device.type).manual_seed(seed)
+
+            # Generate image with progress callback
+            def step_callback(step, timestep, latents):
+                self.update_progress(step, num_steps)
+                return {}
+
+            image = self.pipe(
+                prompt,
+                negative_prompt=negative_prompt if negative_prompt else None,
+                width=width,
+                height=height,
+                num_inference_steps=num_steps,
+                generator=generator,
+                callback=step_callback,
+                callback_steps=1
+            ).images[0]
+
+            # Display image
+            display_image = image.resize((min(width, 512), min(height, 512)), Image.LANCZOS)
+            self.current_image = image
+            image_tk = ImageTk.PhotoImage(display_image)
+            self.image_label.config(image=image_tk)
+            self.image_label.image = image_tk
+            self.save_button["state"] = "normal"
+
+        except ValueError as e:
+            messagebox.showerror("Error", "Please enter valid numbers for width, height, steps, and seed")
+        except Exception as e:
+            messagebox.showerror("Error", f"Image generation failed: {str(e)}")
+        finally:
+            self.generate_button["state"] = "normal"
+            self.progress["value"] = 0
+
+    def save_image(self):
+        """Save generated image to file"""
+        if self.current_image:
+            file_path = filedialog.asksaveasfilename(
+                defaultextension=".png",
+                filetypes=[("PNG files", "*.png"), ("JPEG files", "*.jpg"), ("All files", "*.*")]
+            )
+            if file_path:
+                try:
+                    self.current_image.save(file_path)
+                    messagebox.showinfo("Success", "Image saved successfully")
+                except Exception as e:
+                    messagebox.showerror("Error", f"Failed to save image: {str(e)}")
+
+    def on_closing(self):
+        """Clean up resources before closing"""
+        try:
+            del self.pipe
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except:
+            pass
+        self.root.destroy()
+
+    def run(self):
+        """Start the application"""
+        self.root.mainloop()
+
+if __name__ == "__main__":
+    try:
+        generator = ImageGenerator()
+        generator.run()
+    except Exception as e:
+        print(f"Application failed to start: {str(e)}")
